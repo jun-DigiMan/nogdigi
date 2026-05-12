@@ -534,22 +534,32 @@ function renderAll() {
 }
 
 // ==================== アポ品質分析 ====================
+// リスケ判定: reschedule_date が scheduled_date の月より後（翌月以降にずれた）
+function isReschedNext(a) {
+    if (a.status !== 'リスケ') return false;
+    if (!a.reschedule_date || !a.scheduled_date) return false;
+    return a.reschedule_date.substring(0, 7) > a.scheduled_date.substring(0, 7);
+}
 function buildAppoQualityStats(appos) {
+    const total = appos.length;
     const exec = appos.filter(a => a.status === '実施').length;
     const cancel = appos.filter(a => a.status === 'キャンセル').length;
-    const resched = appos.filter(a => a.status === 'リスケ').length;
-    const decided = exec + cancel + resched;
+    const reschedNext = appos.filter(isReschedNext).length;
+    const reschedOther = appos.filter(a => a.status === 'リスケ' && !isReschedNext(a)).length;
+    const unconfirmed = appos.filter(a => a.status === '未確認').length;
     const lossYen = appos
-        .filter(a => a.status === 'キャンセル' || a.status === 'リスケ')
+        .filter(a => a.status === 'キャンセル' || isReschedNext(a))
         .reduce((sum, a) => sum + (a.amount || a.unit_price || 0), 0);
     return {
-        decided,
+        total,
         exec,
         cancel,
-        resched,
-        execRate: decided > 0 ? exec / decided : 0,
-        cancelRate: decided > 0 ? cancel / decided : 0,
-        reschedRate: decided > 0 ? resched / decided : 0,
+        reschedNext,
+        reschedOther,
+        unconfirmed,
+        execRate: total > 0 ? exec / total : 0,
+        cancelRate: total > 0 ? cancel / total : 0,
+        reschedRate: total > 0 ? reschedNext / total : 0,
         lossYen
     };
 }
@@ -570,49 +580,49 @@ async function renderAppoQuality() {
     if (typeof appointmentsData === 'undefined' || !appointmentsData) return;
     const ym = document.getElementById('filterMonth').value;
 
-    // === 1. 月次推移（DB全期間から取得 = appointmentsDataは当月分のみのため別途クエリ） ===
+    // 翌月以降リスケのSQL条件
+    const RESCHED_NEXT = "status='リスケ' AND reschedule_date IS NOT NULL AND substr(reschedule_date,1,7) > substr(scheduled_date,1,7)";
+
+    // === 1. 月次推移（取得月ベース、母数=取得総数） ===
     const monthlyAggRaw = await queryTurso(`
-        SELECT substr(scheduled_date, 1, 7) AS ym,
-               status,
-               COUNT(*) AS cnt,
-               SUM(COALESCE(amount, unit_price, 0)) AS amt
+        SELECT substr(acquisition_date, 1, 7) AS ym,
+               COUNT(*) AS total,
+               SUM(CASE WHEN status='実施' THEN 1 ELSE 0 END) AS exec_cnt,
+               SUM(CASE WHEN status='キャンセル' THEN 1 ELSE 0 END) AS cancel_cnt,
+               SUM(CASE WHEN ${RESCHED_NEXT} THEN 1 ELSE 0 END) AS resched_next_cnt,
+               SUM(CASE WHEN status='リスケ' AND NOT (${RESCHED_NEXT}) THEN 1 ELSE 0 END) AS resched_other_cnt,
+               SUM(CASE WHEN status='未確認' THEN 1 ELSE 0 END) AS unconfirmed_cnt,
+               SUM(CASE WHEN status='キャンセル' THEN COALESCE(amount,unit_price,0) ELSE 0 END) +
+               SUM(CASE WHEN ${RESCHED_NEXT} THEN COALESCE(amount,unit_price,0) ELSE 0 END) AS loss_yen
         FROM appointments
-        WHERE scheduled_date >= '2025-01-01'
-        GROUP BY ym, status
+        WHERE acquisition_date >= '2025-01-01'
+        GROUP BY ym
         ORDER BY ym
     `);
-    const monthlyAgg = {};
-    monthlyAggRaw.forEach(r => {
-        if (!r.ym) return;
-        const m = (monthlyAgg[r.ym] = monthlyAgg[r.ym] || { exec: 0, cancel: 0, resched: 0, lossYen: 0 });
-        if (r.status === '実施') m.exec = r.cnt;
-        else if (r.status === 'キャンセル') { m.cancel = r.cnt; m.lossYen += r.amt || 0; }
-        else if (r.status === 'リスケ') { m.resched = r.cnt; m.lossYen += r.amt || 0; }
-    });
-    const monthlyStats = Object.entries(monthlyAgg).map(([k, v]) => {
-        const decided = v.exec + v.cancel + v.resched;
-        return {
-            ym: k,
-            decided,
-            exec: v.exec,
-            cancel: v.cancel,
-            resched: v.resched,
-            execRate: decided > 0 ? v.exec / decided : 0,
-            cancelRate: decided > 0 ? v.cancel / decided : 0,
-            reschedRate: decided > 0 ? v.resched / decided : 0,
-            lossYen: v.lossYen
-        };
-    }).sort((a, b) => a.ym.localeCompare(b.ym));
+    const monthlyStats = monthlyAggRaw.filter(r => r.ym).map(r => ({
+        ym: r.ym,
+        total: r.total,
+        exec: r.exec_cnt,
+        cancel: r.cancel_cnt,
+        reschedNext: r.resched_next_cnt,
+        reschedOther: r.resched_other_cnt,
+        unconfirmed: r.unconfirmed_cnt,
+        execRate: r.total > 0 ? r.exec_cnt / r.total : 0,
+        cancelRate: r.total > 0 ? r.cancel_cnt / r.total : 0,
+        reschedRate: r.total > 0 ? r.resched_next_cnt / r.total : 0,
+        lossYen: r.loss_yen
+    }));
 
     let monthlyHtml = '';
     [...monthlyStats].reverse().forEach(s => {
+        const reschedOtherNote = s.reschedOther > 0 ? `<br><span style="font-size:0.7rem;color:var(--text-light);">未判定:${s.reschedOther}</span>` : '';
         monthlyHtml += `
             <tr ${s.ym === ym ? 'style="background:#fff7e0;"' : ''}>
                 <td>${s.ym}</td>
-                <td style="text-align:right;">${s.decided.toLocaleString()}</td>
+                <td style="text-align:right;">${s.total.toLocaleString()}</td>
                 <td style="text-align:right;">${s.exec.toLocaleString()}</td>
                 <td style="text-align:right;">${s.cancel.toLocaleString()}</td>
-                <td style="text-align:right;">${s.resched.toLocaleString()}</td>
+                <td style="text-align:right;">${s.reschedNext.toLocaleString()}${reschedOtherNote}</td>
                 <td style="text-align:right;${pctClass(s.execRate, 'exec')}">${(s.execRate * 100).toFixed(1)}%</td>
                 <td style="text-align:right;${pctClass(s.cancelRate, 'cancel')}">${(s.cancelRate * 100).toFixed(1)}%</td>
                 <td style="text-align:right;${pctClass(s.reschedRate, 'resched')}">${(s.reschedRate * 100).toFixed(1)}%</td>
@@ -648,26 +658,32 @@ async function renderAppoQuality() {
         });
     }
 
-    // === 2. 案件別（当月） ===
-    const monthAppos = appointmentsData.filter(a => (a.scheduled_date || '').startsWith(ym));
+    // === 2 & 3. 案件別/担当者別（当月＝acquisition_dateその月） ===
+    const monthAcquired = await queryTurso(
+        "SELECT * FROM appointments WHERE substr(acquisition_date,1,7) = ?",
+        [ym]
+    );
+
+    // 案件別
     const byProject = {};
-    monthAppos.forEach(a => {
+    monthAcquired.forEach(a => {
         const k = a.project_name || '(未設定)';
         (byProject[k] = byProject[k] || []).push(a);
     });
     const projectStats = Object.entries(byProject)
         .map(([name, list]) => ({ name, ...buildAppoQualityStats(list) }))
-        .filter(s => s.decided > 0)
-        .sort((a, b) => b.cancel + b.resched - (a.cancel + a.resched));
+        .filter(s => s.total > 0)
+        .sort((a, b) => (b.cancel + b.reschedNext) - (a.cancel + a.reschedNext));
     let projectHtml = '';
     projectStats.forEach(s => {
+        const reschedOtherNote = s.reschedOther > 0 ? `<br><span style="font-size:0.7rem;color:var(--text-light);">未判定:${s.reschedOther}</span>` : '';
         projectHtml += `
             <tr>
                 <td>${s.name}</td>
-                <td style="text-align:right;">${s.decided}</td>
+                <td style="text-align:right;">${s.total}</td>
                 <td style="text-align:right;">${s.exec}</td>
                 <td style="text-align:right;">${s.cancel}</td>
-                <td style="text-align:right;">${s.resched}</td>
+                <td style="text-align:right;">${s.reschedNext}${reschedOtherNote}</td>
                 <td style="text-align:right;${pctClass(s.execRate, 'exec')}">${(s.execRate * 100).toFixed(1)}%</td>
                 <td style="text-align:right;${pctClass(s.cancelRate, 'cancel')}">${(s.cancelRate * 100).toFixed(1)}%</td>
                 <td style="text-align:right;${pctClass(s.reschedRate, 'resched')}">${(s.reschedRate * 100).toFixed(1)}%</td>
@@ -676,29 +692,30 @@ async function renderAppoQuality() {
         `;
     });
     const projectBody = document.getElementById('appoQualityProjectBody');
-    if (projectBody) projectBody.innerHTML = projectHtml || '<tr><td colspan="9" style="text-align:center;color:var(--text-light);padding:20px;">当月の確定アポなし</td></tr>';
+    if (projectBody) projectBody.innerHTML = projectHtml || '<tr><td colspan="9" style="text-align:center;color:var(--text-light);padding:20px;">当月の取得アポなし</td></tr>';
 
-    // === 3. 担当者別（当月） ===
+    // 担当者別
     const byMember = {};
-    monthAppos.forEach(a => {
+    monthAcquired.forEach(a => {
         const k = a.member_name || '(未設定)';
         (byMember[k] = byMember[k] || []).push(a);
     });
     const memberTeamMap = getTeamsForMonth(ym);
     const memberStats = Object.entries(byMember)
         .map(([name, list]) => ({ name, team: memberTeamMap[name] || '-', ...buildAppoQualityStats(list) }))
-        .filter(s => s.decided > 0)
-        .sort((a, b) => b.cancel + b.resched - (a.cancel + a.resched));
+        .filter(s => s.total > 0)
+        .sort((a, b) => (b.cancel + b.reschedNext) - (a.cancel + a.reschedNext));
     let memberHtml = '';
     memberStats.forEach(s => {
+        const reschedOtherNote = s.reschedOther > 0 ? `<br><span style="font-size:0.7rem;color:var(--text-light);">未判定:${s.reschedOther}</span>` : '';
         memberHtml += `
             <tr>
                 <td>${displayName(s.name)}</td>
                 <td>${s.team}</td>
-                <td style="text-align:right;">${s.decided}</td>
+                <td style="text-align:right;">${s.total}</td>
                 <td style="text-align:right;">${s.exec}</td>
                 <td style="text-align:right;">${s.cancel}</td>
-                <td style="text-align:right;">${s.resched}</td>
+                <td style="text-align:right;">${s.reschedNext}${reschedOtherNote}</td>
                 <td style="text-align:right;${pctClass(s.execRate, 'exec')}">${(s.execRate * 100).toFixed(1)}%</td>
                 <td style="text-align:right;${pctClass(s.cancelRate, 'cancel')}">${(s.cancelRate * 100).toFixed(1)}%</td>
                 <td style="text-align:right;${pctClass(s.reschedRate, 'resched')}">${(s.reschedRate * 100).toFixed(1)}%</td>
@@ -707,15 +724,15 @@ async function renderAppoQuality() {
         `;
     });
     const memberBody = document.getElementById('appoQualityMemberBody');
-    if (memberBody) memberBody.innerHTML = memberHtml || '<tr><td colspan="10" style="text-align:center;color:var(--text-light);padding:20px;">当月の確定アポなし</td></tr>';
+    if (memberBody) memberBody.innerHTML = memberHtml || '<tr><td colspan="10" style="text-align:center;color:var(--text-light);padding:20px;">当月の取得アポなし</td></tr>';
 
     // === サマリ ===
     const currentMonthStats = monthlyStats.find(s => s.ym === ym);
     const summary = document.getElementById('appoQualitySummary');
     if (summary && currentMonthStats) {
-        summary.innerHTML = `${ym} 確定 ${currentMonthStats.decided}件 / 実施率 <strong>${(currentMonthStats.execRate * 100).toFixed(1)}%</strong> / 毀損見込 <strong>¥${currentMonthStats.lossYen.toLocaleString()}</strong>`;
+        summary.innerHTML = `${ym} 取得 ${currentMonthStats.total}件 / 実施率 <strong>${(currentMonthStats.execRate * 100).toFixed(1)}%</strong> / キャンセル率 <strong>${(currentMonthStats.cancelRate * 100).toFixed(1)}%</strong> / 翌月リスケ率 <strong>${(currentMonthStats.reschedRate * 100).toFixed(1)}%</strong> / 毀損見込 <strong>¥${currentMonthStats.lossYen.toLocaleString()}</strong>`;
     } else if (summary) {
-        summary.innerHTML = `${ym} 確定アポなし`;
+        summary.innerHTML = `${ym} 取得アポなし`;
     }
 }
 
