@@ -264,7 +264,7 @@
                     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;">
                         <div>
                             <div class="section-title" style="margin-bottom:4px;border-bottom:none;padding-bottom:0;">アポ品質分析</div>
-                            <div style="font-size:0.85rem;color:var(--text-light);">実施率・キャンセル率・翌月リスケ率の可視化（分母=取得月のアポ総数、未確認・同月内リスケも分母に含む。翌月リスケはreschedule_dateが元のscheduled_dateより後の月のもの限定／未入力分は「未判定」として注記）</div>
+                            <div style="font-size:0.85rem;color:var(--text-light);">分母=取得月のアポ総数。キャンセル/リスケはステータス通り全件カウント。</div>
                         </div>
                         <div id="appoQualitySummary" style="font-size:0.85rem;color:var(--text-muted);"></div>
                     </div>
@@ -279,12 +279,10 @@
                                     <tr>
                                         <th>月</th>
                                         <th style="text-align:right;">取得総数</th>
-                                        <th style="text-align:right;">実施</th>
                                         <th style="text-align:right;">キャンセル</th>
-                                        <th style="text-align:right;">翌月リスケ</th>
-                                        <th style="text-align:right;">実施率</th>
+                                        <th style="text-align:right;">リスケ</th>
                                         <th style="text-align:right;">キャンセル率</th>
-                                        <th style="text-align:right;">翌月リスケ率</th>
+                                        <th style="text-align:right;">リスケ率</th>
                                         <th style="text-align:right;">毀損見込</th>
                                     </tr>
                                 </thead>
@@ -302,12 +300,10 @@
                                     <tr>
                                         <th>案件</th>
                                         <th style="text-align:right;">取得総数</th>
-                                        <th style="text-align:right;">実施</th>
                                         <th style="text-align:right;">キャンセル</th>
-                                        <th style="text-align:right;">翌月リスケ</th>
-                                        <th style="text-align:right;">実施率</th>
+                                        <th style="text-align:right;">リスケ</th>
                                         <th style="text-align:right;">キャンセル率</th>
-                                        <th style="text-align:right;">翌月リスケ率</th>
+                                        <th style="text-align:right;">リスケ率</th>
                                         <th style="text-align:right;">毀損見込</th>
                                     </tr>
                                 </thead>
@@ -326,12 +322,10 @@
                                         <th>担当者</th>
                                         <th>チーム</th>
                                         <th style="text-align:right;">取得総数</th>
-                                        <th style="text-align:right;">実施</th>
                                         <th style="text-align:right;">キャンセル</th>
-                                        <th style="text-align:right;">翌月リスケ</th>
-                                        <th style="text-align:right;">実施率</th>
+                                        <th style="text-align:right;">リスケ</th>
                                         <th style="text-align:right;">キャンセル率</th>
-                                        <th style="text-align:right;">翌月リスケ率</th>
+                                        <th style="text-align:right;">リスケ率</th>
                                         <th style="text-align:right;">毀損見込</th>
                                     </tr>
                                 </thead>
