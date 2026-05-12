@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+*.log
+__pycache__/
+*.pyc
+.env
+
+# SQLite一時ファイル
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
